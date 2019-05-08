@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+
+import sys
+import json
+import urllib.request
+import http.client
+import re
+from os import path, mkdir
+import argparse
+
+CLIENT_ID = "93e33e327fd8a9b77becd179652272e2"
+
+def is_valid_username(username):
+    if re.match("[a-zA-Z][a-zA-Z0-9_-]*", username) != None:
+        return True
+    return False
+
+def strip_author_from_title(title, author):
+    if title.startswith(author):
+        sans_author = title[len(author):].lstrip()
+        if sans_author[0] in "-:.":
+            return sans_author[1:].lstrip()
+    else:
+        return title
+
+def format_stream(stream_url):
+    return "{}?client_id={}".format(stream_url, CLIENT_ID)
+
+def format_track_data(track):
+    author = track["user"]["username"]
+    title = strip_author_from_title(track["title"], author)
+    stream_url = format_stream(track["stream_url"])
+    return f"#EXTINF:-1,{author} - {title}\n{stream_url}\n"
+
+class TracksList:
+    def __init__(self, lst):
+        if len(lst) == 0:
+            raise Exception("Tracks list is empty")
+        self.tracks = lst
+
+    def print_to_stdout(self):
+        for track in self.tracks:
+            if track["streamable"]:
+                print(format_stream(track["stream_url"]))
+
+    def print_to_m3u(self, filename):
+        with open(filename, "w") as file:
+            file.write("#EXTM3U\n")
+            for track in self.tracks:
+                if track["streamable"]:
+                    track_data = format_track_data(track)
+                    file.write(track_data)
+
+class PlaylistsList:
+    def __init__(self, lst):
+        self.playlists = lst
+
+    def print_info(self):
+        for playlist in self.playlists:
+            pass
+
+    def create_in_dir(self, dir):
+        for playlist in self.playlists:
+            if len(playlist["tracks"]) > 0:
+                tracks = TracksList(playlist["tracks"])
+                tracks.print_to_m3u(f"{dir}/{playlist['permalink']}.m3u")
+
+def get_user_id(username):
+    if not is_valid_username(username):
+        raise(Exception("Username is invalid. A valid username must contain only characters [a-zA-Z0-9_-]"))
+    conn = http.client.HTTPConnection("api.soundcloud.com")
+    conn.request("GET", 
+                 f"/resolve?url=http://soundcloud.com/{username}/&client_id={CLIENT_ID}", 
+                 headers={'Host':'api.soundcloud.com','Accept':'*/*'})
+    response = conn.getresponse()
+    location_url = response.getheader('Location')
+    if not location_url:
+        raise(Exception("Resolver error: Location field not found!"))
+    verification_string = "https://api.soundcloud.com/users/"
+    uid_pos_start = len(verification_string)
+    if location_url[:uid_pos_start] != verification_string:
+        raise(Exception(f"Resolver error: {verification_string} is not a subset of {location_url}"))
+    uid_pos_end = location_url.rfind('?')
+    if uid_pos_end == -1:
+        raise(Exception(f"Resolver error: Couldn't find the user id separator (?)"))
+    user_id = location_url[uid_pos_start:uid_pos_end]
+    return user_id
+
+def tracks_fn(args):
+    url = "https://api.soundcloud.com/"
+    filter_str=''
+    if args.user:
+        url += "users/" + (args.user if args.user.isdigit() else get_user_id(args.user)) + "/"
+    else:
+        if args.tags:
+            filter_str += f"tags={args.tags}&"
+        if args.genres:
+            filter_str += f"genres={args.genres}&"
+    url += "tracks?"
+    if filter_str:
+        url += filter_str
+    if args.query:
+        url += f"q={args.query}&"
+    url += f'client_id={CLIENT_ID}'
+    with urllib.request.urlopen(url) as response:
+        tracks = TracksList(json.load(response))
+        if args.file:
+            try:
+                tracks.print_to_m3u(args.file)
+            except IOError:
+                print(f"ERROR trying to open {args.file}", file=sys.stderr)
+        else:
+            tracks.print_to_stdout()
+
+def playlists_fn(args):
+    url = "https://api.soundcloud.com/"
+    if args.user:
+        url += "users/" + args.user if args.user.is_digit() else get_user_id(args.user) + "/"
+    url += "playlists?"
+    if args.query:
+        url += f"q={args.query}&"
+    url += f'client_id={CLIENT_ID}'
+    with urllib.request.urlopen(url) as response:
+        playlists = PlaylistsList(json.load(response))
+        if args.dir:
+            try:
+                if not path.exists(args.dir):
+                    file = mkdir(args.dir)
+                playlists.create_in_dir(args.dir)
+            except IOError:
+                print(f"ERROR trying to open {args.dir}", file=sys.stderr)
+        else:
+            raise Exception("Unimplemented!")
+
+class ArgParser:
+    def __init__(self, usage, header='', footer=''):
+        self.usage = usage
+        self.parser = argparse.ArgumentParser(add_help=False)
+        self.header = header
+        self.footer = footer
+
+    def add_subparsers(self, title):
+        self.subparsers = SubParsers()
+        self.subparsers.subparsers = self.parser.add_subparsers(required=True)
+        self.subparsers.title = title
+        return self.subparsers
+
+    def print_help(self):
+        string = f"usage: {self.usage}\n\n" + (f"{self.header}\n" if self.header else "")
+        string += self.subparsers.format_help() + "\n"
+        for subparser in self.subparsers.subparser_list:
+            string += subparser.title + ":\n"
+            string += subparser.format_help() + "\n"
+        string += self.footer + "\n" if self.footer else ""
+        print(string)
+
+    def parse_args(self):
+        args = self.parser.parse_args()
+        args.func(args)
+
+class SubParsers:
+    def __init__(self):
+        self.subparser_list = []
+        self.longest_name = 0
+
+    def add_subparser(self, name, help_str, title, callback):
+        subparser = SubParser()
+        subparser.parser = self.subparsers.add_parser(name, add_help=False)
+        subparser.parser.set_defaults(func=callback)
+        subparser.name = name
+        subparser.help_str = help_str
+        subparser.title = title
+        self.subparser_list.append(subparser)
+        return subparser
+
+    def format_help(self):
+        string = self.title + ":\n"
+        for subparser in self.subparser_list:
+            string += f"   {subparser.name:<15}{subparser.help_str}\n"
+        return string
+
+class SubParser:
+    def __init__(self):
+        self.args = []
+
+    def add_argument(self, name, dest, metavar, help_str):
+        self.args.append((name, metavar, help_str))
+        self.parser.add_argument(name, dest=dest)
+
+    def format_help(self):
+        string = ''
+        for (name, metavar, help_str) in self.args:
+            arg = f"{name} {metavar}"
+            string += f"  {arg:<30}{help_str}\n"
+        return string
+
+parser = ArgParser("{} MODE [ARGS]".format(path.basename(sys.argv[0])))
+subparsers = parser.add_subparsers("Modes")
+tracks = subparsers.add_subparser('tracks', 'Get tracks', "Optional tracks mode arguments", tracks_fn)
+tracks.add_argument('-u', 'user', 'USER', "The username or user id of the author")
+tracks.add_argument('-p', 'pid', 'PID', "The playlist id")
+tracks.add_argument('-q', 'query', 'QUERY', "Search for tracks containing query")
+tracks.add_argument('-t', 'tags', 'TAG1,TAG2...,TAGN', "Filter by tags")
+tracks.add_argument('-g', 'genres', 'GENRE1,GENRE2...,GENREN', "Filter by genre")
+tracks.add_argument('-f', 'file','PATH', "Output the track list into an m3u playlist file")
+
+playlists = subparsers.add_subparser('playlists', 'Get playlists', "Optional playlists mode arguments", playlists_fn)
+playlists.add_argument('-u', 'user', 'USERNAME', "The username of the author")
+playlists.add_argument('-q', 'query', 'QUERY', "Filter out playlists that don't match the query")
+playlists.add_argument('-d', 'dir', 'DIR', "Save playlists in the specified directory")
+
+if len(sys.argv) > 1:
+    args = parser.parse_args()
+else:
+    parser.print_help()
