@@ -41,7 +41,7 @@ class TracksList:
     def print_to_stdout(self):
         for track in self.tracks:
             if track["streamable"]:
-                print(format_stream(track["stream_url"]))
+                print(track["title"])
 
     def print_to_m3u(self, filename):
         with open(filename, "w") as file:
@@ -56,12 +56,15 @@ class PlaylistsList:
         self.playlists = lst
 
     def print_info(self):
+        print("       ID  COUNT  TITLE")
+        #print("-----------------------")
         for playlist in self.playlists:
-            pass
+            if playlist["track_count"] > 0:
+                print(f"{playlist['id']:>9}  {playlist['track_count']:>5}  {playlist['title']}")
 
     def create_in_dir(self, dir):
         for playlist in self.playlists:
-            if len(playlist["tracks"]) > 0:
+            if playlist["track_count"] > 0:
                 tracks = TracksList(playlist["tracks"])
                 tracks.print_to_m3u(f"{dir}/{playlist['permalink']}.m3u")
 
@@ -88,22 +91,25 @@ def get_user_id(username):
 
 def tracks_fn(args):
     url = "https://api.soundcloud.com/"
-    filter_str=''
-    if args.user:
-        url += "users/" + (args.user if args.user.isdigit() else get_user_id(args.user)) + "/"
+    if args.pid:
+        url += "playlists/" + args.pid + "?"
     else:
-        if args.tags:
-            filter_str += f"tags={args.tags}&"
-        if args.genres:
-            filter_str += f"genres={args.genres}&"
-    url += "tracks?"
-    if filter_str:
-        url += filter_str
+        filter_str=''
+        if args.user:
+            url += "users/" + (args.user if args.user.isdigit() else get_user_id(args.user)) + "/"
+        else:
+            if args.tags:
+                filter_str += f"tags={args.tags}&"
+            if args.genres:
+                filter_str += f"genres={args.genres}&"
+        url += "tracks?"
+        if filter_str:
+            url += filter_str
     if args.query:
         url += f"q={args.query}&"
     url += f'client_id={CLIENT_ID}'
     with urllib.request.urlopen(url) as response:
-        tracks = TracksList(json.load(response))
+        tracks = TracksList(json.load(response)) if not args.pid else TracksList(json.load(response)["tracks"])
         if args.file:
             try:
                 tracks.print_to_m3u(args.file)
@@ -130,7 +136,7 @@ def playlists_fn(args):
             except IOError:
                 print(f"ERROR trying to open {args.dir}", file=sys.stderr)
         else:
-            raise Exception("Unimplemented!")
+            playlists.print_info()
 
 class ArgParser:
     def __init__(self, usage, header='', footer=''):
