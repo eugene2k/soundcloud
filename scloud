@@ -57,7 +57,6 @@ class PlaylistsList:
 
     def print_info(self):
         print("       ID  COUNT  TITLE")
-        #print("-----------------------")
         for playlist in self.playlists:
             if playlist["track_count"] > 0:
                 print(f"{playlist['id']:>9}  {playlist['track_count']:>5}  {playlist['title']}")
@@ -96,7 +95,7 @@ def tracks_fn(args):
     else:
         filter_str=''
         if args.user:
-            url += "users/" + (args.user if args.user.isdigit() else get_user_id(args.user)) + "/"
+            url += user_part(args.user)
         else:
             if args.tags:
                 filter_str += f"tags={args.tags}&"
@@ -118,10 +117,13 @@ def tracks_fn(args):
         else:
             tracks.print_to_stdout()
 
+def user_part(user_arg):
+    return "users/" + (user_arg if user_arg.isdigit() else get_user_id(user_arg)) + "/"
+
 def playlists_fn(args):
     url = "https://api.soundcloud.com/"
     if args.user:
-        url += "users/" + args.user if args.user.is_digit() else get_user_id(args.user) + "/"
+        url += user_part(args.user)
     url += "playlists?"
     if args.query:
         url += f"q={args.query}&"
