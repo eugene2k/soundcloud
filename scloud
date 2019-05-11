@@ -39,9 +39,10 @@ class TracksList:
         self.tracks = lst
 
     def print_to_stdout(self):
+        print("  USER ID   TRACK ID  TITLE")
         for track in self.tracks:
             if track["streamable"]:
-                print(track["title"])
+                print(f"{track['user_id']:>9}  {track['id']:>9}  {track['title']}")
 
     def print_to_m3u(self, filename):
         with open(filename, "w") as file:
@@ -88,7 +89,27 @@ def get_user_id(username):
     user_id = location_url[uid_pos_start:uid_pos_end]
     return user_id
 
+def user_part(user_arg):
+    return "users/" + (user_arg if user_arg.isdigit() else get_user_id(user_arg)) + "/"
+
+def handle_url(url, handler):
+    try:
+        with urllib.request.urlopen(url) as response:
+            handler(response)
+    except urllib.error.URLError as error:
+        print(f"Cant open url:{url}\n Error: {error}", file=sys.stderr)
+
 def tracks_fn(args):
+    def process_response(response):
+        tracks = TracksList(json.load(response)) if not args.pid else TracksList(json.load(response)["tracks"])
+        if args.file:
+            try:
+                tracks.print_to_m3u(args.file)
+            except IOError:
+                print(f"ERROR trying to open {args.file}", file=sys.stderr)
+        else:
+            tracks.print_to_stdout()
+
     url = "https://api.soundcloud.com/"
     if args.pid:
         url += "playlists/" + args.pid + "?"
@@ -107,28 +128,10 @@ def tracks_fn(args):
     if args.query:
         url += f"q={args.query}&"
     url += f'client_id={CLIENT_ID}'
-    with urllib.request.urlopen(url) as response:
-        tracks = TracksList(json.load(response)) if not args.pid else TracksList(json.load(response)["tracks"])
-        if args.file:
-            try:
-                tracks.print_to_m3u(args.file)
-            except IOError:
-                print(f"ERROR trying to open {args.file}", file=sys.stderr)
-        else:
-            tracks.print_to_stdout()
-
-def user_part(user_arg):
-    return "users/" + (user_arg if user_arg.isdigit() else get_user_id(user_arg)) + "/"
+    handle_url(url, process_response)
 
 def playlists_fn(args):
-    url = "https://api.soundcloud.com/"
-    if args.user:
-        url += user_part(args.user)
-    url += "playlists?"
-    if args.query:
-        url += f"q={args.query}&"
-    url += f'client_id={CLIENT_ID}'
-    with urllib.request.urlopen(url) as response:
+    def process_response(response):
         playlists = PlaylistsList(json.load(response))
         if args.dir:
             try:
@@ -139,6 +142,15 @@ def playlists_fn(args):
                 print(f"ERROR trying to open {args.dir}", file=sys.stderr)
         else:
             playlists.print_info()
+
+    url = "https://api.soundcloud.com/"
+    if args.user:
+        url += user_part(args.user)
+    url += "playlists?"
+    if args.query:
+        url += f"q={args.query}&"
+    url += f'client_id={CLIENT_ID}'
+    handle_url(url, process_response)
 
 class ArgParser:
     def __init__(self, usage, header='', footer=''):
