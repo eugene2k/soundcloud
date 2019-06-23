@@ -101,14 +101,23 @@ def handle_url(url, handler):
 
 def tracks_fn(args):
     def process_response(response):
-        tracks = TracksList(json.load(response)) if not args.pid else TracksList(json.load(response)["tracks"])
-        if args.file:
-            try:
-                tracks.print_to_m3u(args.file)
-            except IOError:
-                print(f"ERROR trying to open {args.file}", file=sys.stderr)
-        else:
-            tracks.print_to_stdout()
+        json_response = json.load(response)
+        try:
+            if not args.pid:
+                tracks = TracksList(json_response)
+            else:
+                tracks = TracksList(json_response["tracks"])
+            if args.file:
+                try:
+                    tracks.print_to_m3u(args.file)
+                except IOError:
+                    print(f"ERROR trying to open {args.file}", file=sys.stderr)
+            else:
+                tracks.print_to_stdout()
+        except Exception as e:
+            print(f"Error: {e}")
+        if args.json:
+            print(json.dumps(json_response, indent=4))
 
     url = "https://api.soundcloud.com/"
     if args.pid:
@@ -206,6 +215,8 @@ class SubParser:
     def add_argument(self, name, dest, metavar, help_str):
         self.args.append((name, metavar, help_str))
         self.parser.add_argument(name, dest=dest)
+    def add_flag(self, name, dest):
+        self.parser.add_argument(name, dest=dest, action='store_true')
 
     def format_help(self):
         string = ''
@@ -222,7 +233,8 @@ tracks.add_argument('-p', 'pid', 'PID', "The playlist id")
 tracks.add_argument('-q', 'query', 'QUERY', "Search for tracks containing query")
 tracks.add_argument('-t', 'tags', 'TAG1,TAG2...,TAGN', "Filter by tags")
 tracks.add_argument('-g', 'genres', 'GENRE1,GENRE2...,GENREN', "Filter by genre")
-tracks.add_argument('-f', 'file','PATH', "Output the track list into an m3u playlist file")
+tracks.add_argument('-f', 'file', 'PATH', "Output the track list into an m3u playlist file")
+tracks.add_flag('-j', 'json')
 
 playlists = subparsers.add_subparser('playlists', 'Get playlists', "Optional playlists mode arguments", playlists_fn)
 playlists.add_argument('-u', 'user', 'USERNAME', "The username of the author")
